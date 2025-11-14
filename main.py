@@ -4,13 +4,16 @@ import utime
 import ubinascii
 import network
 import json
-import io
 from lib.mqttclient import MQTTClient
+import asyncio
+import array
 
 probe_analog = ADC(Pin(26))  # ADC0 on Pyboard
 led = Pin("LED", Pin.OUT)
 
 MEASUREMENT_INTERVAL = 30  # seconds
+
+measure_pool = []
 
 class MoistureSensor:
     def __init__(self, adc):
@@ -90,7 +93,7 @@ class MqttManager:
     def publish_moisture(self, topic, moisture):
         try:
             moistureOutput = Moisture(moisture)
-            self.client.publish(topic, moistureOutput.to_json())
+            self.client.publish(topic, moistureOutput.measure)
         except Exception as e:
             print("Failed to publish moisture:", e)
             raise e
@@ -98,18 +101,78 @@ class MqttManager:
 class Moisture:
     def __init__(self, measure):
         self.measure = measure
-        self.ts = utime.time()
+        self.ts = utime.time()    
 
-    def to_json(self):
-        return json.dumps(self.__dict__)
+class MoistureHandler:
+    def __init__(self, measure_pool):
+        self.measure_pool = measure_pool        
+
+    def add_measure(self, measure):
+        self.measure_pool.append(measure)
+
+        if(len(self.measure_pool) > 100):
+            self.measure_pool.pop(0)       
+
+    def get_last_measure(self) -> str | None:
+        if len(self.measure_pool) > 0:
+            x = self.measure_pool.pop()
+            return json.dumps({"measure": x.measure, "ts": x.ts})
+        else:
+            return None
     
 def restart_and_reconnect():
   print('Restart and Reconnect...')
   time.sleep(10)
   reset()
 
-def main():
+
+async def MqttWorker(wifi_manager, mqtt_manager, topic, moistureHandler):
+    while True:
+        try:
+            if not wifi_manager.wlan.isconnected():
+                print("WiFi disconnected, attempting to reconnect...")
+                if not wifi_manager.wifi_connect():
+                    print("Could not reconnect to WiFi, retrying in 10 seconds...")
+                    await asyncio.sleep(10)
+                    continue
+
+            mqtt_manager.mqtt_connect()
+            print("Connected to MQTT Broker")
+            break
+        except Exception as e:
+            print("Could not connect to MQTT Broker:", e)
+            wifi_manager.wifi_disconnect()
+            print("Retrying in 10 seconds...")
+            await asyncio.sleep(10)
+            
+    while True:        
+        last_measure = moistureHandler.get_last_measure()
+        if last_measure is not None:
+            mqtt_manager.publish_moisture(topic, last_measure)
+        
+        await asyncio.sleep(1)
+
+async def sensor_loop(moisture_sensor, moisture_handler):
+    try:
+        moisture_sensor = MoistureSensor(probe_analog)
+
+        while True:
+            led.on()
+            moisture_value = moisture_sensor.read_moisture()
+
+            moisture = Moisture(moisture_value)
+
+            moisture_handler.add_measure(moisture)
+            led.off()
+            await asyncio.sleep(MEASUREMENT_INTERVAL)
+    except Exception as e:
+        print("An error occurred in sensor loop:", e)
+        raise e
+
+async def main():
     led.off()
+
+    moisture_handler = MoistureHandler(measure_pool)
 
     with open("setting.json", "r") as appsetting:
         settings = json.load(appsetting)
@@ -129,35 +192,13 @@ def main():
         MQTT_USERNAME,
         MQTT_PASSWORD
     )
-    moisture_sensor = MoistureSensor(probe_analog)
 
-    if not wifi_manager.wifi_connect():
-        print("Could not connect to WiFi")
-        return
+    sensor_task = asyncio.create_task(sensor_loop(MoistureSensor(probe_analog), moisture_handler))
+    mqtt_task = asyncio.create_task(MqttWorker(wifi_manager, mqtt_manager, MQTT_MOISTURE_TOPIC, moisture_handler))
 
-    try:
-        mqtt_manager.mqtt_connect()
-    except Exception as e:
-        print("Could not connect to MQTT Broker:", e)
-        wifi_manager.wifi_disconnect()
-        return
+    await asyncio.gather(sensor_task, mqtt_task)
+    
 
-    try:
-        while True:
-            led.on()
-            moisture = moisture_sensor.read_moisture()
-            mqtt_manager.publish_moisture(MQTT_MOISTURE_TOPIC, moisture)
-            print("Published moisture:", moisture)
-            led.off()
-            time.sleep(MEASUREMENT_INTERVAL)
-    except KeyboardInterrupt:
-        print("Stopping...")
-    except Exception as e:
-        print("An error occurred:", e)
-        restart_and_reconnect()
-    finally:
-        mqtt_manager.mqtt_disconnect()
-        wifi_manager.wifi_disconnect()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
