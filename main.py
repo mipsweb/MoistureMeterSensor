@@ -4,18 +4,12 @@ import utime
 import ubinascii
 import network
 import json
+import io
 from lib.mqttclient import MQTTClient
 
 probe_analog = ADC(Pin(26))  # ADC0 on Pyboard
 led = Pin("LED", Pin.OUT)
 
-WIFI_SSID = "mipsweb"
-WIFI_PASSWORD = "seek@destroy"
-MQTT_CLIENT_ID = ubinascii.hexlify("mqttx_0ad5b2ea") # type: ignore
-MQTT_BROKER = "10.211.1.221"
-MQTT_MOISTURE_TOPIC = b'mqttx_0ad5b2ea/moisture'
-MQTT_USERNAME = "mipsweb"
-MQTT_PASSWORD = "test1234"
 MEASUREMENT_INTERVAL = 30  # seconds
 
 class MoistureSensor:
@@ -115,7 +109,17 @@ def restart_and_reconnect():
   reset()
 
 def main():
-    led.off()    
+    led.off()
+
+    with open("setting.json", "r") as appsetting:
+        settings = json.load(appsetting)
+        WIFI_SSID = settings["WIFI_SSID"]
+        WIFI_PASSWORD = settings["WIFI_PASSWORD"]
+        MQTT_CLIENT_ID = ubinascii.hexlify(settings["MQTT_CLIENT_ID"])
+        MQTT_BROKER = settings["MQTT_BROKER"]
+        MQTT_MOISTURE_TOPIC = settings["MQTT_TOPIC"].encode('utf-8')
+        MQTT_USERNAME = settings["MQTT_USERNAME"]
+        MQTT_PASSWORD = settings["MQTT_PASSWORD"]
 
     wifi_manager = WifiManager(WIFI_SSID, WIFI_PASSWORD)
     mqtt_manager = MqttManager(
