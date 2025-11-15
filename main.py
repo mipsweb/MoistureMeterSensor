@@ -6,7 +6,6 @@ import network
 import json
 from lib.mqttclient import MQTTClient
 import asyncio
-import array
 
 probe_analog = ADC(Pin(26))  # ADC0 on Pyboard
 led = Pin("LED", Pin.OUT)
@@ -126,31 +125,38 @@ def restart_and_reconnect():
   reset()
 
 
-async def MqttWorker(wifi_manager, mqtt_manager, topic, moistureHandler):
-    while True:
-        try:
-            if not wifi_manager.wlan.isconnected():
-                print("WiFi disconnected, attempting to reconnect...")
-                if not wifi_manager.wifi_connect():
-                    print("Could not reconnect to WiFi, retrying in 10 seconds...")
-                    await asyncio.sleep(10)
-                    continue
+async def MqttWorker(wifi_manager, mqtt_manager, topic, moistureHandler, cancelToken=None):
+    while True and (cancelToken is None or not cancelToken.is_set()):
+        while True:
+            try:
+                if not wifi_manager.wlan.isconnected():
+                    print("WiFi disconnected, attempting to reconnect...")
+                    if not wifi_manager.wifi_connect():
+                        print("Could not reconnect to WiFi, retrying in 10 seconds...")
+                        await asyncio.sleep(10)
+                        continue
 
-            mqtt_manager.mqtt_connect()
-            print("Connected to MQTT Broker")
-            break
-        except Exception as e:
-            print("Could not connect to MQTT Broker:", e)
-            wifi_manager.wifi_disconnect()
-            print("Retrying in 10 seconds...")
-            await asyncio.sleep(10)
+                mqtt_manager.mqtt_connect()
+                print("Connected to MQTT Broker")
+                break
+            except Exception as e:
+                print("Could not connect to MQTT Broker:", e)
+                wifi_manager.wifi_disconnect()
+                print("Retrying in 10 seconds...")
+                await asyncio.sleep(10)
+                
+        while True:
+            try:        
+                last_measure = moistureHandler.get_last_measure()
+                if last_measure is not None:
+                    mqtt_manager.publish_moisture(topic, last_measure)
             
-    while True:        
-        last_measure = moistureHandler.get_last_measure()
-        if last_measure is not None:
-            mqtt_manager.publish_moisture(topic, last_measure)
-        
-        await asyncio.sleep(1)
+                await asyncio.sleep(1)
+            except Exception as e:
+                print("Error in MQTT Worker:", e)
+                print("Reconnecting...")
+                break
+
 
 async def sensor_loop(moisture_sensor, moisture_handler):
     try:
