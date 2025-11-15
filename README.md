@@ -79,8 +79,7 @@ Implements the MQTT protocol for publishing sensor data to a remote broker, incl
 **Current Branch**: `mqtt_error_handling` - Active development on MQTT error handling improvements
 
 ## License
-
-[Add your license information here]
+No License
 
 ## Author
 
