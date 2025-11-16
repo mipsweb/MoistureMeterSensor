@@ -26,6 +26,7 @@ MoistureMeter/
 ├── setting.json         # Configuration file (WiFi, MQTT credentials)
 └── lib/
     └── mqttclient.py    # MQTT client implementation
+    └── ntptime.py       # NTP time implementation
 ```
 
 ## Configuration
@@ -40,7 +41,9 @@ Edit `setting.json` to configure your WiFi and MQTT settings:
     "MQTT_BROKER": "your_mqtt_broker_ip",
     "MQTT_TOPIC": "topic/path/for/moisture",
     "MQTT_USERNAME": "mqtt_username",
-    "MQTT_PASSWORD": "mqtt_password"
+    "MQTT_PASSWORD": "mqtt_password",
+    "MEASUREMENT_INTERVAL": 60,
+    "NTP_SERVER": "pool.ntp.org"
 }
 ```
 
