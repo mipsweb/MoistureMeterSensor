@@ -6,11 +6,10 @@ import network
 import json
 from lib.mqttclient import MQTTClient
 import asyncio
+from lib.ntptime import settime
 
 probe_analog = ADC(Pin(26))  # ADC0 on Pyboard
 led = Pin("LED", Pin.OUT)
-
-MEASUREMENT_INTERVAL = 30  # seconds
 
 measure_pool = []
 
@@ -125,7 +124,7 @@ def restart_and_reconnect():
   reset()
 
 
-async def MqttWorker(wifi_manager, mqtt_manager, topic, moistureHandler, cancelToken=None):
+async def MqttWorker(wifi_manager, mqtt_manager, topic, ntp_server, moistureHandler, cancelToken=None):
     while True and (cancelToken is None or not cancelToken.is_set()):
         while True:
             try:
@@ -135,6 +134,9 @@ async def MqttWorker(wifi_manager, mqtt_manager, topic, moistureHandler, cancelT
                         print("Could not reconnect to WiFi, retrying in 10 seconds...")
                         await asyncio.sleep(10)
                         continue
+
+
+                settime(ntp_server)
 
                 mqtt_manager.mqtt_connect()
                 print("Connected to MQTT Broker")
@@ -158,7 +160,7 @@ async def MqttWorker(wifi_manager, mqtt_manager, topic, moistureHandler, cancelT
                 break
 
 
-async def sensor_loop(moisture_sensor, moisture_handler):
+async def sensor_loop(interval, moisture_sensor, moisture_handler):
     try:
         moisture_sensor = MoistureSensor(probe_analog)
 
@@ -170,7 +172,7 @@ async def sensor_loop(moisture_sensor, moisture_handler):
 
             moisture_handler.add_measure(moisture)
             led.off()
-            await asyncio.sleep(MEASUREMENT_INTERVAL)
+            await asyncio.sleep(interval)
     except Exception as e:
         print("An error occurred in sensor loop:", e)
         raise e
@@ -189,6 +191,8 @@ async def main():
         MQTT_MOISTURE_TOPIC = settings["MQTT_TOPIC"].encode('utf-8')
         MQTT_USERNAME = settings["MQTT_USERNAME"]
         MQTT_PASSWORD = settings["MQTT_PASSWORD"]
+        MEASUREMENT_INTERVAL = settings["MEASUREMENT_INTERVAL"]
+        NTP_SERVER = settings["NTP_SERVER"]
 
     wifi_manager = WifiManager(WIFI_SSID, WIFI_PASSWORD)
     mqtt_manager = MqttManager(
@@ -199,8 +203,8 @@ async def main():
         MQTT_PASSWORD
     )
 
-    sensor_task = asyncio.create_task(sensor_loop(MoistureSensor(probe_analog), moisture_handler))
-    mqtt_task = asyncio.create_task(MqttWorker(wifi_manager, mqtt_manager, MQTT_MOISTURE_TOPIC, moisture_handler))
+    sensor_task = asyncio.create_task(sensor_loop(MEASUREMENT_INTERVAL, MoistureSensor(probe_analog), moisture_handler))
+    mqtt_task = asyncio.create_task(MqttWorker(wifi_manager, mqtt_manager, MQTT_MOISTURE_TOPIC, NTP_SERVER, moisture_handler))
 
     await asyncio.gather(sensor_task, mqtt_task)
     
